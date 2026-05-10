@@ -1,0 +1,19 @@
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 1px;
+}
+
+/* Prevent Tailwind/preflight from breaking tile/images sizing */
+.leaflet-container img {
+  max-width: none !important;
+}
+
+/* Ensure tiles layer behaves normally */
+.leaflet-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-tile-container {
+  position: absolute;
+}
