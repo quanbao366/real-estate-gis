@@ -1,6 +1,8 @@
 const express = require("express");
 const { Pool } = require("pg");
 const cors = require("cors");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const app = express();
@@ -32,7 +34,177 @@ app.get("/", (req, res) => {
   res.json({ message: "DATN Backend running!" });
 });
 
-// Properties endpoint (PostGIS)
+// -------------------- Auth (JWT + bcrypt) --------------------
+
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+
+function signToken(user) {
+  return jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      full_name: user.full_name,
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN },
+  );
+}
+
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization || "";
+  const [type, token] = header.split(" ");
+  if (type !== "Bearer" || !token) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ success: false, error: "Invalid token" });
+  }
+}
+
+// Register
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { full_name, email, password } = req.body || {};
+
+    if (!full_name || !String(full_name).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, error: "full_name is required" });
+    }
+    if (!email || !String(email).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, error: "email is required" });
+    }
+    if (!password || !String(password)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "password is required" });
+    }
+
+    const emailLower = String(email).trim().toLowerCase();
+
+    const existsRes = await pool.query(
+      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+      [emailLower],
+    );
+    if (existsRes?.rows?.length) {
+      return res
+        .status(409)
+        .json({ success: false, error: "Email already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(String(password), 10);
+
+    const insertRes = await pool.query(
+      `INSERT INTO users (full_name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, full_name, email, role, created_at`,
+      [String(full_name).trim(), emailLower, passwordHash, "user"],
+    );
+
+    const row = insertRes?.rows?.[0];
+    return res.status(201).json({
+      success: true,
+      message: "Register successful",
+      user: row,
+    });
+  } catch (err) {
+    console.error("[POST /api/auth/register] error:", err);
+    return res.status(500).json({ success: false, error: "Register failed" });
+  }
+});
+
+// Login
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !String(email).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, error: "email is required" });
+    }
+    if (!password || !String(password)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "password is required" });
+    }
+
+    const emailLower = String(email).trim().toLowerCase();
+
+    const userRes = await pool.query(
+      `SELECT id, full_name, email, password_hash, role
+       FROM users WHERE email = $1 LIMIT 1`,
+      [emailLower],
+    );
+
+    const user = userRes?.rows?.[0];
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid email or password" });
+    }
+
+    const ok = await bcrypt.compare(String(password), user.password_hash);
+    if (!ok) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid email or password" });
+    }
+
+    const token = signToken(user);
+
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("[POST /api/auth/login] error:", err);
+    return res.status(500).json({ success: false, error: "Login failed" });
+  }
+});
+
+// Me
+app.get("/api/auth/me", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+
+    const meRes = await pool.query(
+      `SELECT id, full_name, email, role, created_at FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    );
+
+    const me = meRes?.rows?.[0];
+    if (!me) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    return res.json({ success: true, user: me });
+  } catch (err) {
+    console.error("[GET /api/auth/me] error:", err);
+    return res.status(500).json({ success: false, error: "Fetch user failed" });
+  }
+});
+
+// -------------------- Properties endpoint (PostGIS) --------------------
+
 app.get("/api/properties/:id", async (req, res) => {
   // NOTE: Chạy query lấy latitude/longitude từ PostGIS geom nếu có.
   // Trường hợp bảng/ cột không có geom thì fallback về latitude/longitude.
@@ -87,6 +259,9 @@ app.get("/api/properties", async (req, res) => {
       maxArea,
       q,
       type,
+      location,
+      minBedrooms,
+      minBathrooms,
       sort,
     } = req.query;
 
@@ -94,22 +269,33 @@ app.get("/api/properties", async (req, res) => {
     const l = Math.min(50, Math.max(1, parseInt(limit)));
     const offset = (p - 1) * l;
 
-    const latNum = lat ? parseFloat(lat) : 10.8231;
-    const lngNum = lng ? parseFloat(lng) : 106.6297;
-    const radiusM = parseInt(radius);
+    // Không filter theo bán kính nếu client không truyền lat/lng/radius.
+    // Điều này đảm bảo mở trang lần đầu sẽ load toàn bộ dữ liệu (không WHERE theo khoảng cách).
+    const latNum = lat ? parseFloat(lat) : null;
+    const lngNum = lng ? parseFloat(lng) : null;
+    const radiusM = radius ? parseInt(radius) : null;
 
     const whereClauses = [];
     const values = [];
 
-    // PostGIS distance filter (first)
-    values.push(lngNum, latNum, radiusM);
-    whereClauses.push(
-      `ST_DWithin(
-        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
-        ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-        $3
-      )`,
-    );
+    // PostGIS distance filter (chỉ thêm khi có đủ tham số)
+    if (
+      latNum !== null &&
+      lngNum !== null &&
+      Number.isFinite(latNum) &&
+      Number.isFinite(lngNum) &&
+      radiusM !== null &&
+      Number.isFinite(radiusM)
+    ) {
+      values.push(lngNum, latNum, radiusM);
+      whereClauses.push(
+        `ST_DWithin(
+          ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+          $3
+        )`,
+      );
+    }
 
     // Price / area
     if (minPrice !== undefined && minPrice !== "") {
@@ -129,13 +315,44 @@ app.get("/api/properties", async (req, res) => {
       whereClauses.push(`area <= $${values.length}`);
     }
 
+    // Location (khu vực) filter by `location` field
+    // Preset có thể viết tắt (vd: "TP Thủ Đức") nên match theo cả preset đầy đủ
+    // và token cuối cùng (vd: "Thủ Đức") để giảm trường hợp trả về 0.
+    if (location !== undefined && location !== "") {
+      const locRaw = String(location).trim();
+      const locLower = locRaw.toLowerCase();
+      const lastToken =
+        locRaw.split(/\s+/).filter(Boolean).pop()?.toLowerCase() || locLower;
+
+      values.push(`%${locLower}%`, `%${lastToken}%`);
+      whereClauses.push(
+        `LOWER(COALESCE(location, '')) LIKE $${values.length - 1} OR LOWER(COALESCE(location, '')) LIKE $${values.length}`,
+      );
+    }
+
+    // Bedrooms / Bathrooms (min only)
+    if (minBedrooms !== undefined && minBedrooms !== "") {
+      const mb = parseInt(minBedrooms);
+      if (Number.isFinite(mb) && mb > 0) {
+        values.push(mb);
+        whereClauses.push(`bedrooms >= $${values.length}`);
+      }
+    }
+
+    if (minBathrooms !== undefined && minBathrooms !== "") {
+      const mB = parseInt(minBathrooms);
+      if (Number.isFinite(mB) && mB > 0) {
+        values.push(mB);
+        whereClauses.push(`bathrooms >= $${values.length}`);
+      }
+    }
+
     // Type filter (property_type) - fuzzy matching
-    // type (frontend) is Vietnamese; DB may not be consistent => use ILIKE with normalization
     if (type !== undefined && type !== "") {
-      const t = String(type).trim();
+      const t = `%${String(type).trim().toLowerCase()}%`;
       values.push(t);
       whereClauses.push(
-        `LOWER(property_type) ILIKE LOWER($${values.length}) OR LOWER(property_type) ILIKE LOWER($${values.length})`,
+        `LOWER(COALESCE(property_type, '')) LIKE $${values.length}`,
       );
     }
 
@@ -169,6 +386,7 @@ app.get("/api/properties", async (req, res) => {
       orderBySQL = "ORDER BY area DESC NULLS LAST";
     }
 
+    // LIMIT/OFFSET: dùng indices dựa trên số lượng values hiện tại.
     const dataQuery = `
       SELECT *
       FROM properties
@@ -191,11 +409,15 @@ app.get("/api/properties", async (req, res) => {
       pool.query(dataQuery, dataValues),
     ]);
 
+    const total = countRes.rows?.[0]?.total ?? 0;
+    const totalPages = total > 0 ? Math.ceil(total / l) : 0;
+
     res.json({
-      items: Array.isArray(dataRes.rows) ? dataRes.rows : [],
-      total: countRes.rows?.[0]?.total ?? 0,
+      data: Array.isArray(dataRes.rows) ? dataRes.rows : [],
+      total,
       page: p,
       limit: l,
+      totalPages,
     });
   } catch (err) {
     console.error(err);

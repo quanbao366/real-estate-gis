@@ -26,7 +26,7 @@ function PlaceholderIcon() {
   );
 }
 
-export default function PropertyCard({ property }) {
+export default function PropertyCard({ property, onSelectProperty }) {
   const p = property || {};
 
   const title = p.title || "Không có tiêu đề";
@@ -38,7 +38,19 @@ export default function PropertyCard({ property }) {
   const lng = p.longitude ?? p.lng ?? "";
 
   return (
-    <article className="group bg-white border rounded-2xl shadow-sm hover:shadow-md transition-shadow p-4">
+    <article
+      className="group bg-white border rounded-2xl shadow-sm hover:shadow-md transition-shadow p-4 cursor-pointer"
+      onClick={() => {
+        if (onSelectProperty) onSelectProperty(property);
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          if (onSelectProperty) onSelectProperty(property);
+        }
+      }}
+    >
       <div className="flex items-start gap-3">
         <PlaceholderIcon />
         <div className="min-w-0 flex-1">

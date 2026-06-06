@@ -1,233 +1,206 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import Navbar from "./_components/Navbar";
-import FilterSection from "./_components/FilterSection";
-import MapSection from "./_components/MapSection";
 import PropertyList from "./_components/PropertyList";
+import MapSection from "./_components/MapSection";
+import FilterSectionV2 from "./_components/FilterSectionV2";
 import Pagination from "./_components/Pagination";
 
-export default function Home() {
-  const center = useMemo(() => [10.8231, 106.6297], []);
+const DEFAULT_CENTER = [10.8231, 106.6297];
+const DEFAULT_RADIUS_KM = 10;
+const DEFAULT_LIMIT = 20;
 
-  const [radiusKm, setRadiusKm] = useState(10);
+function buildQueryParams(query) {
+  // Chỉ include param thực sự được chọn.
+  const params = new URLSearchParams();
 
-  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  if (query.q) params.set("q", query.q);
+  if (query.type) params.set("type", query.type);
+  if (query.location) params.set("location", query.location);
+  if (query.minBedrooms) params.set("minBedrooms", query.minBedrooms);
+  if (query.minBathrooms) params.set("minBathrooms", query.minBathrooms);
 
-  // Draft dùng cho UI slider/input
-  const [draftQuery, setDraftQuery] = useState({
-    // sliders (UI display default)
-    priceMinSlider: 0,
-    priceMaxSlider: 50,
-    areaMinSlider: 30,
-    areaMaxSlider: 500,
+  if (query.sort) params.set("sort", query.sort);
 
-    q: "",
-    type: "",
-    sort: "newest",
-  });
+  if (query.minPrice) params.set("minPrice", query.minPrice);
+  if (query.maxPrice) params.set("maxPrice", query.maxPrice);
+  if (query.minArea) params.set("minArea", query.minArea);
+  if (query.maxArea) params.set("maxArea", query.maxArea);
 
-  // applied gửi lên API (GIÁ TRỊ NULL/"" sẽ được backend bỏ qua nếu thiếu param)
-  const [appliedQuery, setAppliedQuery] = useState({
-    q: "",
-    type: "",
-    sort: "newest",
+  // Không gắn lat/lng/radius mặc định -> backend sẽ không ST_DWithin.
+  // Nếu bạn muốn lọc theo bán kính trong future, sẽ add thêm ở đây.
 
-    minPrice: "",
-    maxPrice: "",
-    minArea: "",
-    maxArea: "",
-  });
+  return params;
+}
 
-  const [page, setPage] = useState(1);
-  const limit = 10;
+export default function HomePage() {
+  const [selectedPropertyId, setSelectedPropertyId] = useState(null);
+
+  const initialUIQuery = useMemo(
+    () => ({
+      q: "",
+      type: "",
+      location: "",
+      minBedrooms: "",
+      minBathrooms: "",
+      sort: "newest",
+      minPrice: "",
+      maxPrice: "",
+      minArea: "",
+      maxArea: "",
+    }),
+    [],
+  );
+
+  const [uiQuery, setUiQuery] = useState(initialUIQuery);
+  // appliedQuery chỉ cập nhật khi user bấm "Áp dụng"
+  const [appliedQuery, setAppliedQuery] = useState(initialUIQuery);
 
   const [properties, setProperties] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [limit] = useState(DEFAULT_LIMIT);
+
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(0);
 
-  useEffect(() => {
-    const fetchProperties = async () => {
-      setLoading(true);
-      try {
-        const radius = Math.max(1, Number(radiusKm)) * 1000;
+  const listRef = useMemo(() => ({ current: null }), []);
 
-        const params = new URLSearchParams({
-          lat: String(center[0]),
-          lng: String(center[1]),
-          radius: String(radius),
-          page: String(page),
-          limit: String(limit),
-        });
+  const fetchProperties = useCallback(async (query, page = 1) => {
+    setLoading(true);
+    try {
+      const params = buildQueryParams(query);
+      params.set("page", String(page));
+      params.set("limit", String(limit));
+      const url = `http://localhost:5000/api/properties?${params.toString()}`;
 
-        // sliders: đổi UI thì chưa set min/max API. Chỉ update API khi đã apply hoặc slider end
-        if (appliedQuery.minPrice !== "")
-          params.set("minPrice", appliedQuery.minPrice);
-        if (appliedQuery.maxPrice !== "")
-          params.set("maxPrice", appliedQuery.maxPrice);
-        if (appliedQuery.minArea !== "")
-          params.set("minArea", appliedQuery.minArea);
-        if (appliedQuery.maxArea !== "")
-          params.set("maxArea", appliedQuery.maxArea);
+      const res = await fetch(url);
+      const data = await res.json();
 
-        if (appliedQuery.q) params.set("q", appliedQuery.q);
-        if (appliedQuery.type) params.set("type", appliedQuery.type);
-        if (appliedQuery.sort && appliedQuery.sort !== "newest") {
-          params.set("sort", appliedQuery.sort);
-        }
-
-        const url = `http://localhost:5000/api/properties?${params.toString()}`;
-        const res = await fetch(url);
-        const data = await res.json();
-
-        setProperties(Array.isArray(data?.items) ? data.items : []);
-        setTotal(Number(data?.total || 0));
-      } catch (err) {
-        console.error("Error fetching properties:", err);
-        setProperties([]);
-        setTotal(0);
-      } finally {
-        setLoading(false);
+      if (!res.ok) {
+        throw new Error(data?.error || "Fetch failed");
       }
-    };
 
-    fetchProperties();
-  }, [center, radiusKm, page, limit, appliedQuery]);
+      setProperties(Array.isArray(data?.data) ? data.data : []);
+      const t = Number(data?.total || 0);
+      setTotal(t);
+      setTotalPages(Number(data?.totalPages || 0));
+    } catch (e) {
+      console.error(e);
+      setProperties([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load lần đầu: không áp filter mặc định => gọi API với query rỗng.
+  useEffect(() => {
+    fetchProperties({
+      ...initialUIQuery,
+      // Đảm bảo không gửi min/max/type/location mặc định.
+      // sort vẫn giữ để backend có ORDER BY.
+      q: "",
+      type: "",
+      location: "",
+      minBedrooms: "",
+      minBathrooms: "",
+      minPrice: "",
+      maxPrice: "",
+      minArea: "",
+      maxArea: "",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchProperties]);
+
+  const handleChange = useCallback((key, value) => {
+    setUiQuery((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleApply = useCallback(() => {
+    setAppliedQuery(uiQuery);
+    setCurrentPage(1);
+    fetchProperties(uiQuery, 1);
+  }, [fetchProperties, uiQuery]);
+
+  const handleReset = useCallback(() => {
+    setUiQuery(initialUIQuery);
+    setAppliedQuery(initialUIQuery);
+    fetchProperties({
+      ...initialUIQuery,
+      q: "",
+      type: "",
+      location: "",
+      minBedrooms: "",
+      minBathrooms: "",
+      minPrice: "",
+      maxPrice: "",
+      minArea: "",
+      maxArea: "",
+    });
+  }, [fetchProperties, initialUIQuery]);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar radiusKm={radiusKm} setRadiusKm={setRadiusKm} />
+      <Navbar radiusKm={DEFAULT_RADIUS_KM} setRadiusKm={() => {}} />
 
       <main className="max-w-7xl mx-auto px-4 py-4 space-y-4">
-        <div id="list">
-          <PropertyList loading={loading} properties={properties} />
+        <div id="list" ref={(el) => (listRef.current = el)}>
+          <PropertyList
+            loading={loading}
+            properties={properties}
+            onSelectProperty={(prop) => {
+              const id = prop?.id || prop?.listing_id;
+              setSelectedPropertyId(id || null);
+            }}
+          />
+
+          {properties?.length ? (
+            <div className="mt-4">
+              <Pagination
+                page={currentPage}
+                total={total}
+                limit={limit}
+                loading={loading}
+                onChangePage={(p) => {
+                  const next = Math.max(1, p);
+                  setCurrentPage(next);
+                  fetchProperties(appliedQuery, next);
+                  setTimeout(() => {
+                    listRef.current?.scrollIntoView?.({ behavior: "smooth" });
+                  }, 50);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
 
-        <Pagination
-          page={page}
-          limit={limit}
-          total={total}
-          loading={loading}
-          onChangePage={(next) => setPage(next)}
-        />
-
-        {/* Footer row: | Filter | Map | */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           <div className="lg:col-span-8 order-1 lg:order-2">
             <MapSection
-              center={center}
-              radiusKm={radiusKm}
+              center={DEFAULT_CENTER}
+              radiusKm={DEFAULT_RADIUS_KM}
               loading={loading}
               properties={properties}
+              selectedPropertyId={selectedPropertyId}
             />
           </div>
 
           <div className="lg:col-span-4 order-2 lg:order-1">
-            <FilterSection
-              query={draftQuery}
+            <FilterSectionV2
+              query={uiQuery}
               loading={loading}
               total={total}
-              // realtime: search/type/sort cập nhật API ngay (page.js sẽ setAppliedQuery)
-              onChange={(key, value) => {
-                // Khi user chưa tương tác: KHÔNG apply filter vào API
-                if (!hasUserInteracted) {
-                  setHasUserInteracted(true);
-                }
-
-                // sliders UI update (không commit API)
-                if (
-                  key === "priceMinSlider" ||
-                  key === "priceMaxSlider" ||
-                  key === "areaMinSlider" ||
-                  key === "areaMaxSlider"
-                ) {
-                  setDraftQuery((s) => ({ ...s, [key]: value }));
-                  return;
-                }
-
-                // realtime: search/type/sort áp dụng ngay
-                if (key === "q" || key === "type" || key === "sort") {
-                  setDraftQuery((s) => ({ ...s, [key]: value }));
-                  setPage(1);
-                  setAppliedQuery((s) => ({ ...s, [key]: value }));
-                  return;
-                }
-
-                setDraftQuery((s) => ({ ...s, [key]: value }));
-              }}
-              // Áp dụng: chuyển slider (min/max) từ draft -> applied (gọi API)
-              onApply={() => {
-                setHasUserInteracted(true);
-                setPage(1);
-                const next = {
-                  ...appliedQuery,
-                  q: draftQuery.q,
-                  type: draftQuery.type,
-                  sort: draftQuery.sort,
-
-                  // chỉ set min/max nếu user đã thao tác (đã qua nút apply)
-                  minPrice:
-                    draftQuery.priceMinSlider <= 0
-                      ? ""
-                      : String(draftQuery.priceMinSlider),
-                  maxPrice:
-                    draftQuery.priceMaxSlider >= 50
-                      ? ""
-                      : String(draftQuery.priceMaxSlider),
-                  minArea:
-                    draftQuery.areaMinSlider <= 30
-                      ? ""
-                      : String(draftQuery.areaMinSlider),
-                  maxArea:
-                    draftQuery.areaMaxSlider >= 500
-                      ? ""
-                      : String(draftQuery.areaMaxSlider),
-                };
-                setAppliedQuery(next);
-              }}
-              onReset={() => {
-                setHasUserInteracted(false);
-                setDraftQuery({
-                  priceMinSlider: 0,
-                  priceMaxSlider: 50,
-                  areaMinSlider: 30,
-                  areaMaxSlider: 500,
-                  q: "",
-                  type: "",
-                  sort: "newest",
-                });
-                setPage(1);
-                setAppliedQuery({
-                  q: "",
-                  type: "",
-                  sort: "newest",
-                  minPrice: "",
-                  maxPrice: "",
-                  minArea: "",
-                  maxArea: "",
-                });
-              }}
-              // slider end: chỉ commit vào appliedQuery nếu đã user tương tác
-              onSliderCommit={(commit) => {
-                setHasUserInteracted(true);
-                setPage(1);
-                setAppliedQuery((s) => ({ ...s, ...commit }));
-              }}
+              onChange={handleChange}
+              onApply={handleApply}
+              onReset={handleReset}
             />
           </div>
         </div>
       </main>
-
-      <footer className="mt-6 bg-slate-900 text-slate-300 px-4 py-6">
-        <div className="max-w-7xl mx-auto text-sm">
-          <p className="font-semibold">DATN GIS Real Estate</p>
-          <p className="text-xs text-slate-400 mt-1">
-            Backend: Express + PostgreSQL/PostGIS • Frontend: Next.js + Tailwind
-            + Leaflet
-          </p>
-        </div>
-      </footer>
     </div>
   );
 }

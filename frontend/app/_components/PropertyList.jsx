@@ -1,7 +1,11 @@
 import React from "react";
 import PropertyCard from "./PropertyCard";
 
-export default function PropertyList({ loading, properties }) {
+export default function PropertyList({
+  loading,
+  properties,
+  onSelectProperty,
+}) {
   return (
     <section
       className="bg-white rounded-2xl border shadow-sm p-4"
@@ -27,6 +31,7 @@ export default function PropertyList({ loading, properties }) {
               <PropertyCard
                 key={property.id || property.listing_id || idx}
                 property={property}
+                onSelectProperty={onSelectProperty}
               />
             );
           })}
