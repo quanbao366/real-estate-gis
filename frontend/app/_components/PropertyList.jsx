@@ -5,6 +5,9 @@ export default function PropertyList({
   loading,
   properties,
   onSelectProperty,
+  favoritesSet,
+  onToggleFavorite,
+  disableToggle = false,
 }) {
   return (
     <section
@@ -27,11 +30,16 @@ export default function PropertyList({
       ) : properties?.length ? (
         <div className="space-y-3">
           {properties.map((property, idx) => {
+            const propertyId = property?.id ?? property?.listing_id;
+            const isFavorite = favoritesSet?.has?.(propertyId) ?? false;
             return (
               <PropertyCard
                 key={property.id || property.listing_id || idx}
                 property={property}
                 onSelectProperty={onSelectProperty}
+                favoriteState={{ isFavorite }}
+                onToggleFavorite={onToggleFavorite}
+                disableToggle={disableToggle}
               />
             );
           })}

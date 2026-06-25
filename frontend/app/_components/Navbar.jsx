@@ -69,9 +69,14 @@ export default function Navbar({ radiusKm, setRadiusKm }) {
     <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b shadow-sm">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-500 text-white flex items-center justify-center font-bold">
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-500 text-white flex items-center justify-center font-bold"
+            aria-label="Về trang chính"
+          >
             GIS
-          </div>
+          </button>
           <div>
             <h1 className="text-lg font-extrabold">BĐS GIS DATN</h1>
             <p className="text-xs text-gray-500">
@@ -81,24 +86,69 @@ export default function Navbar({ radiusKm, setRadiusKm }) {
         </div>
 
         <nav className="hidden md:flex items-center gap-2 text-sm">
-          <a
+          <button
+            type="button"
             className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
-            href="#map"
+            onClick={() => {
+              router.push("/");
+              setTimeout(() => {
+                document
+                  .getElementById("map")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }, 50);
+            }}
           >
             Bản đồ
-          </a>
-          <a
+          </button>
+          <button
+            type="button"
             className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
-            href="#list"
+            onClick={() => {
+              router.push("/");
+              setTimeout(() => {
+                document
+                  .getElementById("list")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }, 50);
+            }}
           >
             Danh sách
-          </a>
-          <a
+          </button>
+          <button
+            type="button"
             className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
-            href="#filter"
+            onClick={() => {
+              router.push("/");
+              setTimeout(() => {
+                document
+                  .getElementById("filter")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }, 50);
+            }}
           >
             Bộ lọc
-          </a>
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
+            onClick={() => router.push("/create-property")}
+          >
+            Đăng tin
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
+            onClick={() => router.push("/my-properties")}
+          >
+            Tin của tôi
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded-lg hover:bg-gray-100 font-medium"
+            onClick={() => router.push("/favorites")}
+          >
+            Bất động sản yêu thích
+          </button>
         </nav>
 
         <div className="flex items-center gap-3">

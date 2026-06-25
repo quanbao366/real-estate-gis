@@ -7,6 +7,7 @@ import PropertyList from "./_components/PropertyList";
 import MapSection from "./_components/MapSection";
 import FilterSectionV2 from "./_components/FilterSectionV2";
 import Pagination from "./_components/Pagination";
+import ChatWidget from "./_components/ChatWidget";
 
 const DEFAULT_CENTER = [10.8231, 106.6297];
 const DEFAULT_RADIUS_KM = 10;
@@ -36,6 +37,15 @@ function buildQueryParams(query) {
 }
 
 export default function HomePage() {
+  useEffect(() => {
+    // Bảo đảm khi quay lại từ /favorites thì luôn reset về đầu trang (tránh kẹt anchor/scroll)
+    try {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
   const [selectedPropertyId, setSelectedPropertyId] = useState(null);
 
   const initialUIQuery = useMemo(
@@ -60,6 +70,9 @@ export default function HomePage() {
 
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  const [favoritesSet, setFavoritesSet] = useState(() => new Set());
+  const [favoritesLoaded, setFavoritesLoaded] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [limit] = useState(DEFAULT_LIMIT);
@@ -97,6 +110,83 @@ export default function HomePage() {
     }
   }, []);
 
+  const loadFavorites = useCallback(async () => {
+    if (favoritesLoaded) return;
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setFavoritesSet(new Set());
+      setFavoritesLoaded(true);
+      return;
+    }
+
+    try {
+      const res = await fetch("http://localhost:5000/api/favorites", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "Fetch favorites failed");
+
+      const favRows = Array.isArray(data?.data) ? data.data : [];
+      const next = new Set(favRows.map((p) => p.id));
+      setFavoritesSet(next);
+    } catch (e) {
+      console.error(e);
+      setFavoritesSet(new Set());
+    } finally {
+      setFavoritesLoaded(true);
+    }
+  }, [favoritesLoaded]);
+
+  const onToggleFavorite = useCallback(
+    async (propertyId) => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        // chưa login thì không cho thao tác lưu
+        return;
+      }
+
+      const id = Number(propertyId);
+      if (!Number.isFinite(id)) return;
+
+      const currentlyFavorite = favoritesSet.has(id);
+
+      // optimistic update
+      setFavoritesSet((prev) => {
+        const next = new Set(prev);
+        if (currentlyFavorite) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+
+      try {
+        const method = currentlyFavorite ? "DELETE" : "POST";
+        const url = `http://localhost:5000/api/favorites/${id}`;
+
+        const res = await fetch(url, {
+          method,
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          // rollback
+          setFavoritesSet((prev) => {
+            const next = new Set(prev);
+            if (currentlyFavorite) next.add(id);
+            else next.delete(id);
+            return next;
+          });
+          throw new Error(data?.error || "Toggle favorite failed");
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [favoritesSet],
+  );
+
   // Load lần đầu: không áp filter mặc định => gọi API với query rỗng.
   useEffect(() => {
     fetchProperties({
@@ -113,8 +203,9 @@ export default function HomePage() {
       minArea: "",
       maxArea: "",
     });
+    loadFavorites();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchProperties]);
+  }, [fetchProperties, loadFavorites]);
 
   const handleChange = useCallback((key, value) => {
     setUiQuery((prev) => ({ ...prev, [key]: value }));
@@ -152,6 +243,8 @@ export default function HomePage() {
           <PropertyList
             loading={loading}
             properties={properties}
+            favoritesSet={favoritesSet}
+            onToggleFavorite={onToggleFavorite}
             onSelectProperty={(prop) => {
               const id = prop?.id || prop?.listing_id;
               setSelectedPropertyId(id || null);
@@ -201,6 +294,7 @@ export default function HomePage() {
           </div>
         </div>
       </main>
+      <ChatWidget />
     </div>
   );
 }

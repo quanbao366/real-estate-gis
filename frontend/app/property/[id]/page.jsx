@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
 import Navbar from "../../_components/Navbar";
+import VirtualTourModal from "../../_components/VirtualTourModal";
 
 const MapContainer = dynamic(
   () => import("react-leaflet").then((mod) => ({ default: mod.MapContainer })),
@@ -67,12 +68,10 @@ export default function PropertyDetailPage({ params }) {
   const [property, setProperty] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [vrOpen, setVrOpen] = useState(false);
 
   const lat = property?.latitude ?? property?.lat;
   const lng = property?.longitude ?? property?.lng;
-
-  const hasValidCoords =
-    Number.isFinite(parseFloat(lat)) && Number.isFinite(parseFloat(lng));
 
   const center = useMemo(() => {
     const a = parseFloat(lat);
@@ -172,7 +171,7 @@ export default function PropertyDetailPage({ params }) {
                   </p>
                 </div>
 
-                <div className="text-right shrink-0">
+                <div className="text-right shrink-0 flex flex-col items-end gap-2">
                   <div className="text-emerald-600 font-extrabold text-lg">
                     {property.price !== null && property.price !== undefined
                       ? formatPrice(property.price)
@@ -181,6 +180,15 @@ export default function PropertyDetailPage({ params }) {
                   <div className="text-xs text-gray-500 mt-1">
                     {property.area ? `${property.area} m²` : "—"}
                   </div>
+
+                  {property?.virtual_tour_url ? (
+                    <button
+                      onClick={() => setVrOpen(true)}
+                      className="text-sm font-semibold px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                    >
+                      Xem VR 360
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -222,6 +230,13 @@ export default function PropertyDetailPage({ params }) {
             </div>
           )}
         </section>
+
+        <VirtualTourModal
+          open={vrOpen}
+          onClose={() => setVrOpen(false)}
+          virtualTourUrl={property?.virtual_tour_url}
+          title={property?.title}
+        />
 
         <section className="bg-white border rounded-2xl shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b flex items-center justify-between">

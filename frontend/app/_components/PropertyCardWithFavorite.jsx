@@ -1,9 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 function formatPrice(rawPrice) {
-  // Chuẩn hóa theo đơn vị DB: 1 đơn vị = 100,000 VND
   const value = Number(rawPrice) * 100000;
   if (!value || Number.isNaN(value)) return "—";
 
@@ -26,12 +25,16 @@ function PlaceholderIcon() {
   );
 }
 
-export default function PropertyCard({
+function getToken() {
+  return typeof window !== "undefined" ? localStorage.getItem("token") : null;
+}
+
+export default function PropertyCardWithFavorite({
   property,
-  onSelectProperty,
-  favoriteState,
+  isFavorite,
   onToggleFavorite,
-  disableToggle = false,
+  disableToggle,
+  onSelectProperty,
 }) {
   const p = property || {};
 
@@ -43,8 +46,20 @@ export default function PropertyCard({
   const lat = p.latitude ?? p.lat ?? "";
   const lng = p.longitude ?? p.lng ?? "";
 
-  const propertyId = p.id ?? p.listing_id;
-  const isFavorite = favoriteState?.isFavorite ?? false;
+  const id = p.id;
+  const token = useMemo(() => getToken(), []);
+
+  // handle click card vs click favorite button
+  const handleFavoriteClick = useCallback(
+    async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (disableToggle) return;
+      if (!token) return;
+      if (onToggleFavorite) await onToggleFavorite(id);
+    },
+    [disableToggle, token, onToggleFavorite, id],
+  );
 
   return (
     <article
@@ -64,7 +79,7 @@ export default function PropertyCard({
         <PlaceholderIcon />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h3 className="font-extrabold text-sm line-clamp-2">{title}</h3>
               <p className="text-xs text-gray-500 truncate mt-1">{location}</p>
             </div>
@@ -72,22 +87,19 @@ export default function PropertyCard({
             <button
               type="button"
               aria-label={isFavorite ? "Bỏ lưu" : "Lưu tin"}
-              disabled={disableToggle}
-              onClick={async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (disableToggle) return;
-                if (!propertyId) return;
-                if (onToggleFavorite) await onToggleFavorite(propertyId);
-              }}
+              onClick={handleFavoriteClick}
+              disabled={disableToggle || !token}
               className={
-                "shrink-0 h-8 w-8 rounded-xl border flex items-center justify-center transition " +
-                (isFavorite
-                  ? "bg-rose-600 border-rose-600 text-white hover:bg-rose-700"
-                  : "bg-white border-gray-200 text-rose-600 hover:bg-rose-50")
+                "shrink-0 text-xs font-extrabold px-3 py-2 rounded-xl border transition " +
+                (disableToggle || !token
+                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
+                  : isFavorite
+                    ? "bg-red-50 text-red-700 border-red-200"
+                    : "bg-gray-100 text-gray-800 border-gray-200 hover:bg-gray-200")
               }
             >
-              {isFavorite ? "❤️" : "♡"}
+              <span className="mr-1">{isFavorite ? "❤️" : "♡"}</span>
+              {isFavorite ? "Đã lưu" : "Lưu tin"}
             </button>
           </div>
 
@@ -134,7 +146,8 @@ export default function PropertyCard({
               href={p.id ? `/property/${p.id}` : "#"}
               className="shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 transition"
               onClick={(e) => {
-                if (!p.id) e.preventDefault();
+                // allow navigation
+                e.stopPropagation();
               }}
             >
               Xem chi tiết →

@@ -205,6 +205,86 @@ app.get("/api/auth/me", authMiddleware, async (req, res) => {
 
 // -------------------- Properties endpoint (PostGIS) --------------------
 
+app.post("/api/properties", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    if (!userId)
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+
+    const { title, price, area, property_type, location, description } =
+      req.body || {};
+
+    // Validate
+    const titleStr = title !== undefined ? String(title).trim() : "";
+    const typeStr =
+      property_type !== undefined ? String(property_type).trim() : "";
+    const locationStr = location !== undefined ? String(location).trim() : "";
+    const descStr = description !== undefined ? String(description).trim() : "";
+
+    const priceNum =
+      price === "" || price === undefined || price === null
+        ? NaN
+        : Number(price);
+    const areaNum =
+      area === "" || area === undefined || area === null ? NaN : Number(area);
+
+    if (!titleStr)
+      return res
+        .status(400)
+        .json({ success: false, error: "title is required" });
+    if (!Number.isFinite(priceNum) || priceNum <= 0)
+      return res
+        .status(400)
+        .json({ success: false, error: "price must be > 0" });
+    if (!Number.isFinite(areaNum) || areaNum <= 0)
+      return res
+        .status(400)
+        .json({ success: false, error: "area must be > 0" });
+    if (!typeStr)
+      return res
+        .status(400)
+        .json({ success: false, error: "property_type is required" });
+    if (!locationStr)
+      return res
+        .status(400)
+        .json({ success: false, error: "location is required" });
+    if (!descStr)
+      return res
+        .status(400)
+        .json({ success: false, error: "description is required" });
+
+    const insertRes = await pool.query(
+      `INSERT INTO properties (user_id, title, price, area, property_type, location, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING
+         id,
+         user_id,
+         title,
+         price,
+         area,
+         location,
+         description,
+         COALESCE(latitude, ST_Y(geom::geometry)) as latitude,
+         COALESCE(longitude, ST_X(geom::geometry)) as longitude,
+         listing_id,
+         bedrooms,
+         bathrooms,
+         property_type,
+         created_at,
+         updated_at
+      `,
+      [userId, titleStr, priceNum, areaNum, typeStr, locationStr, descStr],
+    );
+
+    return res.status(201).json({ success: true, data: insertRes.rows?.[0] });
+  } catch (err) {
+    console.error("[POST /api/properties] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Create property failed" });
+  }
+});
+
 app.get("/api/properties/:id", async (req, res) => {
   // NOTE: Chạy query lấy latitude/longitude từ PostGIS geom nếu có.
   // Trường hợp bảng/ cột không có geom thì fallback về latitude/longitude.
@@ -219,15 +299,20 @@ app.get("/api/properties/:id", async (req, res) => {
          price,
          area,
          location,
+         description,
          COALESCE(latitude, ST_Y(geom::geometry)) as latitude,
          COALESCE(longitude, ST_X(geom::geometry)) as longitude,
          listing_id,
          bedrooms,
          bathrooms,
-         property_type
+         property_type,
+         virtual_tour_url,
+         vr_url,
+         model_3d
        FROM properties
        WHERE id = $1
-       LIMIT 1`,
+       LIMIT 1
+      `,
       [id],
     );
 
@@ -422,6 +507,304 @@ app.get("/api/properties", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Database query failed" });
+  }
+});
+
+// -------------------- Favorites (JWT protected) --------------------
+
+app.post("/api/favorites/:propertyId", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    const { propertyId } = req.params || {};
+
+    const propertyIdNum = parseInt(propertyId);
+    if (!userId || !Number.isFinite(propertyIdNum)) {
+      return res.status(400).json({ success: false, error: "Invalid input" });
+    }
+
+    await pool.query(
+      `INSERT INTO favorites (user_id, property_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, property_id) DO NOTHING`,
+      [userId, propertyIdNum],
+    );
+
+    return res.json({ success: true, message: "Added to favorites" });
+  } catch (err) {
+    console.error("[POST /api/favorites] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Add favorite failed" });
+  }
+});
+
+app.delete("/api/favorites/:propertyId", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    const { propertyId } = req.params || {};
+
+    const propertyIdNum = parseInt(propertyId);
+    if (!userId || !Number.isFinite(propertyIdNum)) {
+      return res.status(400).json({ success: false, error: "Invalid input" });
+    }
+
+    await pool.query(
+      `DELETE FROM favorites
+       WHERE user_id = $1 AND property_id = $2`,
+      [userId, propertyIdNum],
+    );
+
+    return res.json({ success: true, message: "Removed from favorites" });
+  } catch (err) {
+    console.error("[DELETE /api/favorites] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Remove favorite failed" });
+  }
+});
+
+app.get("/api/favorites", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+
+    const favRes = await pool.query(
+      `SELECT
+         p.id,
+         p.title,
+         p.price,
+         p.area,
+         p.location,
+         COALESCE(p.latitude, ST_Y(p.geom::geometry)) as latitude,
+         COALESCE(p.longitude, ST_X(p.geom::geometry)) as longitude,
+         p.listing_id,
+         p.bedrooms,
+         p.bathrooms,
+         p.property_type,
+         f.created_at as favorited_at
+       FROM favorites f
+       JOIN properties p ON p.id = f.property_id
+       WHERE f.user_id = $1
+       ORDER BY f.created_at DESC`,
+      [userId],
+    );
+
+    return res.json({ success: true, data: favRes.rows || [] });
+  } catch (err) {
+    console.error("[GET /api/favorites] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Fetch favorites failed" });
+  }
+});
+
+app.get("/api/my-properties", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+
+    const myRes = await pool.query(
+      `SELECT
+         id,
+         user_id,
+         title,
+         price,
+         area,
+         location,
+         COALESCE(latitude, ST_Y(geom::geometry)) as latitude,
+         COALESCE(longitude, ST_X(geom::geometry)) as longitude,
+         description,
+         listing_id,
+         bedrooms,
+         bathrooms,
+         property_type,
+         created_at,
+         updated_at
+       FROM properties
+       WHERE user_id = $1
+       ORDER BY created_at DESC, id DESC`,
+      [userId],
+    );
+
+    return res.json({ success: true, data: myRes.rows || [] });
+  } catch (err) {
+    console.error("[GET /api/my-properties] error:", err);
+    return res.status(500).json({ success: false, error: "Fetch failed" });
+  }
+});
+
+function validatePropertyPayload(body) {
+  const { title, price, area, property_type, location, description } =
+    body || {};
+
+  const titleStr = title !== undefined ? String(title).trim() : "";
+  const typeStr =
+    property_type !== undefined ? String(property_type).trim() : "";
+  const locationStr = location !== undefined ? String(location).trim() : "";
+  const descStr = description !== undefined ? String(description).trim() : "";
+
+  const priceNum =
+    price === "" || price === undefined || price === null ? NaN : Number(price);
+  const areaNum =
+    area === "" || area === undefined || area === null ? NaN : Number(area);
+
+  if (!titleStr) return { ok: false, error: "title is required" };
+  if (!Number.isFinite(priceNum) || priceNum <= 0)
+    return { ok: false, error: "price must be > 0" };
+  if (!Number.isFinite(areaNum) || areaNum <= 0)
+    return { ok: false, error: "area must be > 0" };
+  if (!typeStr) return { ok: false, error: "property_type is required" };
+  if (!locationStr) return { ok: false, error: "location is required" };
+  if (!descStr) return { ok: false, error: "description is required" };
+
+  return {
+    ok: true,
+    data: {
+      titleStr,
+      priceNum,
+      areaNum,
+      typeStr,
+      locationStr,
+      descStr,
+    },
+  };
+}
+
+app.put("/api/properties/:id", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    const { id } = req.params || {};
+
+    const idNum = parseInt(id);
+    if (!userId || !Number.isFinite(idNum)) {
+      return res.status(400).json({ success: false, error: "Invalid input" });
+    }
+
+    const ownershipRes = await pool.query(
+      `SELECT id FROM properties WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [idNum, userId],
+    );
+
+    if (!ownershipRes?.rows?.length) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+
+    const validation = validatePropertyPayload(req.body);
+    if (!validation.ok) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const { titleStr, priceNum, areaNum, typeStr, locationStr, descStr } =
+      validation.data;
+
+    const updateRes = await pool.query(
+      `UPDATE properties
+       SET
+         title = $1,
+         price = $2,
+         area = $3,
+         property_type = $4,
+         location = $5,
+         description = $6,
+         updated_at = NOW()
+       WHERE id = $7 AND user_id = $8
+       RETURNING
+         id,
+         user_id,
+         title,
+         price,
+         area,
+         location,
+         description,
+         COALESCE(latitude, ST_Y(geom::geometry)) as latitude,
+         COALESCE(longitude, ST_X(geom::geometry)) as longitude,
+         listing_id,
+         bedrooms,
+         bathrooms,
+         property_type,
+         created_at,
+         updated_at`,
+      [
+        titleStr,
+        priceNum,
+        areaNum,
+        typeStr,
+        locationStr,
+        descStr,
+        idNum,
+        userId,
+      ],
+    );
+
+    return res.json({ success: true, data: updateRes.rows?.[0] });
+  } catch (err) {
+    console.error("[PUT /api/properties/:id] error:", err);
+    return res.status(500).json({ success: false, error: "Update failed" });
+  }
+});
+
+app.delete("/api/properties/:id", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.user || {};
+    const { id } = req.params || {};
+
+    const idNum = parseInt(id);
+    if (!userId || !Number.isFinite(idNum)) {
+      return res.status(400).json({ success: false, error: "Invalid input" });
+    }
+
+    const ownershipRes = await pool.query(
+      `SELECT id FROM properties WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [idNum, userId],
+    );
+
+    if (!ownershipRes?.rows?.length) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+
+    await pool.query(`DELETE FROM properties WHERE id = $1 AND user_id = $2`, [
+      idNum,
+      userId,
+    ]);
+
+    return res.json({ success: true, message: "Deleted" });
+  } catch (err) {
+    console.error("[DELETE /api/properties/:id] error:", err);
+    return res.status(500).json({ success: false, error: "Delete failed" });
+  }
+});
+
+// -------------------- Chatbot --------------------
+// POST /api/chat
+// Không yêu cầu auth (giai đoạn đầu). Ưu tiên truy vấn PostgreSQL trước khi trả lời.
+app.post("/api/chat", async (req, res) => {
+  try {
+    const { message } = req.body || {};
+    const msgStr = message != null ? String(message).trim() : "";
+
+    if (!msgStr) {
+      return res
+        .status(400)
+        .json({ success: false, error: "message is required" });
+    }
+
+    const { handleChat } = require("./chat/chatService");
+    const result = await handleChat({ message: msgStr, pool });
+
+    return res.json({
+      success: true,
+      text: result.text,
+      properties: result.properties,
+      count: result.count,
+      intent: result.intent,
+    });
+  } catch (err) {
+    console.error("[POST /api/chat] error:", err);
+    return res.status(500).json({ success: false, error: "Chat failed" });
   }
 });
 

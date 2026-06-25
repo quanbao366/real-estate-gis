@@ -15,7 +15,8 @@
     "next": "14.0.0",
     "react": "^18",
     "react-dom": "^18",
-    "react-leaflet": "^4.2.1"
+    "react-leaflet": "^4.2.1",
+    "three": "^0.164.1"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.16",
