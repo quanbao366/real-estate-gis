@@ -31,8 +31,11 @@ export default function VirtualTourModal({
 
   const draggingRef = useRef(false);
   const lastXRef = useRef(0);
+  const lastYRef = useRef(0);
   const targetYawRef = useRef(0);
+  const targetPitchRef = useRef(0);
   const yawRef = useRef(0);
+  const pitchRef = useRef(0);
 
   const [ready, setReady] = useState(false);
   const [imgError, setImgError] = useState("");
@@ -69,6 +72,8 @@ export default function VirtualTourModal({
     if (!open) return;
     targetYawRef.current = 0;
     yawRef.current = 0;
+    targetPitchRef.current = 0;
+    pitchRef.current = 0;
     setReady(false);
     setImgFormatError("");
     setImgError("");
@@ -205,15 +210,35 @@ export default function VirtualTourModal({
         if (!open) return;
         draggingRef.current = true;
         lastXRef.current = e.clientX;
+        lastYRef.current = e.clientY;
         e.currentTarget.setPointerCapture?.(e.pointerId);
       };
       const onPointerMove = (e) => {
         if (!draggingRef.current) return;
-        const dx = e.clientX - lastXRef.current;
-        lastXRef.current = e.clientX;
 
-        const sensitivity = 0.005;
-        targetYawRef.current += dx * sensitivity;
+        const dx = e.clientX - lastXRef.current;
+        const dy = e.clientY - lastYRef.current;
+
+        lastXRef.current = e.clientX;
+        lastYRef.current = e.clientY;
+
+        const yawSensitivity = 0.005;
+        const pitchSensitivity = 0.005;
+
+        // Yaw: left/right
+        targetYawRef.current += dx * yawSensitivity;
+
+        // Pitch: up/down (clamp to avoid flipping)
+        const minPitch = (-85 * Math.PI) / 180;
+        const maxPitch = (85 * Math.PI) / 180;
+
+        // dy > 0 means pointer moved down => look down => pitch should decrease/increase?
+        // Mapping chosen so dragging up makes you look up.
+        targetPitchRef.current += -dy * pitchSensitivity;
+        targetPitchRef.current = Math.max(
+          minPitch,
+          Math.min(maxPitch, targetPitchRef.current),
+        );
       };
       const onPointerUp = (e) => {
         draggingRef.current = false;
@@ -245,11 +270,14 @@ export default function VirtualTourModal({
       const animate = () => {
         if (!open) return;
 
-        // Smooth yaw
+        // Smooth yaw + pitch (no React state)
         if (!reducedMotion) {
           yawRef.current += (targetYawRef.current - yawRef.current) * 0.15;
+          pitchRef.current +=
+            (targetPitchRef.current - pitchRef.current) * 0.15;
         } else {
           yawRef.current = targetYawRef.current;
+          pitchRef.current = targetPitchRef.current;
         }
 
         // Apply rotation
@@ -259,6 +287,7 @@ export default function VirtualTourModal({
         const cameraLocal = cameraRef.current;
         if (meshLocal && rendererLocal && sceneLocal && cameraLocal) {
           meshLocal.rotation.y = yawRef.current;
+          meshLocal.rotation.x = pitchRef.current;
           rendererLocal.render(sceneLocal, cameraLocal);
         }
 

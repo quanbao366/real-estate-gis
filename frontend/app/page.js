@@ -211,15 +211,23 @@ export default function HomePage() {
     setUiQuery((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleApply = useCallback(() => {
-    setAppliedQuery(uiQuery);
-    setCurrentPage(1);
-    fetchProperties(uiQuery, 1);
-  }, [fetchProperties, uiQuery]);
+  const handleApply = useCallback(
+    (payloadOverride) => {
+      const nextAppliedQuery = payloadOverride
+        ? { ...uiQuery, ...payloadOverride }
+        : uiQuery;
+      setAppliedQuery(nextAppliedQuery);
+      setCurrentPage(1);
+      fetchProperties(nextAppliedQuery, 1);
+    },
+    [fetchProperties, uiQuery],
+  );
 
   const handleReset = useCallback(() => {
     setUiQuery(initialUIQuery);
     setAppliedQuery(initialUIQuery);
+
+    // Reset cũng phải fetch lại ngay.
     fetchProperties({
       ...initialUIQuery,
       q: "",
